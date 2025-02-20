@@ -1,0 +1,283 @@
+// Pin definitions for motors (L298N)
+const int motorLeftEN = 3;
+const int motorLeftIN1 = 2;
+const int motorLeftIN2 = 4;
+const int motorRightEN = 5;
+const int motorRightIN1 = 6;
+const int motorRightIN2 = 7;
+
+// Sensor pins
+const int IR_SENSOR_PIN = A1;
+const int REAR_IR_SENSOR_PIN = A2;
+const int LEFT_ECHO_PIN = 8;
+const int LEFT_TRIG_PIN = 9;
+const int RIGHT_ECHO_PIN = 10;
+const int RIGHT_TRIG_PIN = 11;
+const int EMERGENCY_STOP_PIN = 12;
+
+// Constants
+const int OBSTACLE_THRESHOLD = 500;
+const int REAR_OBSTACLE_THRESHOLD = 500;
+const int COLUMN_DISTANCE = 30;
+const int TURN_DELAY = 1000;
+const int TOTAL_COLUMNS = 6;
+const unsigned long MAX_FORWARD_TIME = 5000;
+const int MIN_TURN_SPEED = 150;
+const int MAX_TURN_SPEED = 255;
+const int FORWARD_SPEED = 200;
+
+// Global state variables
+int currentColumn = 0;
+bool movingRight = true;
+unsigned long lastFeedbackTime = 0;
+bool emergencyStopTriggered = false;
+
+// Function prototypes
+void setupMotors();
+void moveForward(int speed);
+void moveBackward(int speed);
+void turnLeft();
+void turnRight();
+void stopMotors();
+long readUltrasonicDistance(int trigPin, int echoPin);
+void traverseClassroom();
+void calibrateSensors();
+void logStatus(int leftDist, int rightDist);
+void recoverOrientation();
+void emergencyStop();
+bool checkRearObstacle();
+
+void setup() {
+  setupMotors();
+  
+  // Initialize sensors
+  pinMode(IR_SENSOR_PIN, INPUT);
+  pinMode(REAR_IR_SENSOR_PIN, INPUT);
+  pinMode(LEFT_TRIG_PIN, OUTPUT);
+  pinMode(LEFT_ECHO_PIN, INPUT);
+  pinMode(RIGHT_TRIG_PIN, OUTPUT);
+  pinMode(RIGHT_ECHO_PIN, INPUT);
+  pinMode(EMERGENCY_STOP_PIN, INPUT_PULLUP);
+  
+  attachInterrupt(digitalPinToInterrupt(EMERGENCY_STOP_PIN), emergencyStop, FALLING);
+  
+  Serial.begin(9600);
+  calibrateSensors();
+  delay(3000);
+}
+
+void setupMotors() {
+  pinMode(motorLeftEN, OUTPUT);
+  pinMode(motorLeftIN1, OUTPUT);
+  pinMode(motorLeftIN2, OUTPUT);
+  pinMode(motorRightEN, OUTPUT);
+  pinMode(motorRightIN1, OUTPUT);
+  pinMode(motorRightIN2, OUTPUT);
+}
+
+void moveForward(int speed) {
+  analogWrite(motorLeftEN, speed);
+  analogWrite(motorRightEN, speed);
+  digitalWrite(motorLeftIN1, LOW);
+  digitalWrite(motorLeftIN2, HIGH);
+  digitalWrite(motorRightIN1, LOW);
+  digitalWrite(motorRightIN2, HIGH);
+}
+
+void moveBackward(int speed) {
+  analogWrite(motorLeftEN, speed);
+  analogWrite(motorRightEN, speed);
+  digitalWrite(motorLeftIN1, HIGH);
+  digitalWrite(motorLeftIN2, LOW);
+  digitalWrite(motorRightIN1, HIGH);
+  digitalWrite(motorRightIN2, LOW);
+}
+
+void turnRight() {
+  int targetRotation = 90;
+  float currentRotation = 0;
+  unsigned long startTime = millis();
+  
+  while (currentRotation < targetRotation && !emergencyStopTriggered) {
+    analogWrite(motorLeftEN, MAX_TURN_SPEED);
+    analogWrite(motorRightEN, MAX_TURN_SPEED);
+    digitalWrite(motorLeftIN1, HIGH);
+    digitalWrite(motorLeftIN2, LOW);
+    digitalWrite(motorRightIN1, LOW);
+    digitalWrite(motorRightIN2, HIGH);
+    
+    currentRotation = (millis() - startTime) * (90.0 / TURN_DELAY);
+    delay(10);
+  }
+  stopMotors();
+}
+
+void turnLeft() {
+  int targetRotation = 90;
+  float currentRotation = 0;
+  unsigned long startTime = millis();
+  
+  while (currentRotation < targetRotation && !emergencyStopTriggered) {
+    analogWrite(motorLeftEN, MAX_TURN_SPEED);
+    analogWrite(motorRightEN, MAX_TURN_SPEED);
+    digitalWrite(motorLeftIN1, LOW);
+    digitalWrite(motorLeftIN2, HIGH);
+    digitalWrite(motorRightIN1, HIGH);
+    digitalWrite(motorRightIN2, LOW);
+    
+    currentRotation = (millis() - startTime) * (90.0 / TURN_DELAY);
+    delay(10);
+  }
+  stopMotors();
+}
+
+void stopMotors() {
+  analogWrite(motorLeftEN, 0);
+  analogWrite(motorRightEN, 0);
+}
+
+long readUltrasonicDistance(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH);
+  return duration * 0.034 / 2;
+}
+
+bool checkRearObstacle() {
+  return analogRead(REAR_IR_SENSOR_PIN) < REAR_OBSTACLE_THRESHOLD;
+}
+
+void calibrateSensors() {
+  Serial.println("Starting sensor calibration...");
+  
+  // Calibrate ultrasonic sensors
+  long sumLeft = 0, sumRight = 0;
+  for(int i = 0; i < 5; i++) {
+    sumLeft += readUltrasonicDistance(LEFT_TRIG_PIN, LEFT_ECHO_PIN);
+    sumRight += readUltrasonicDistance(RIGHT_TRIG_PIN, RIGHT_ECHO_PIN);
+    delay(100);
+  }
+  
+  // Average readings
+  long avgLeft = sumLeft / 5;
+  long avgRight = sumRight / 5;
+  
+  Serial.println("Calibration complete!");
+  Serial.print("Left sensor average: ");
+  Serial.println(avgLeft);
+  Serial.print("Right sensor average: ");
+  Serial.println(avgRight);
+  
+  // Test IR sensors
+  Serial.print("Front IR reading: ");
+  Serial.println(analogRead(IR_SENSOR_PIN));
+  Serial.print("Rear IR reading: ");
+  Serial.println(analogRead(REAR_IR_SENSOR_PIN));
+}
+
+void logStatus(int leftDist, int rightDist) {
+  Serial.print("Column: ");
+  Serial.print(currentColumn);
+  Serial.print(" Left: ");
+  Serial.print(leftDist);
+  Serial.print(" Right: ");
+  Serial.print(rightDist);
+  Serial.print(" Front IR: ");
+  Serial.print(analogRead(IR_SENSOR_PIN));
+  Serial.print(" Rear IR: ");
+  Serial.println(analogRead(REAR_IR_SENSOR_PIN));
+}
+
+void recoverOrientation() {
+  Serial.println("Attempting to recover orientation...");
+  stopMotors();
+  moveBackward(MIN_TURN_SPEED);
+  delay(1000);
+  stopMotors();
+  
+  for(int i = 0; i < 4; i++) {
+    turnRight();
+    int leftDist = readUltrasonicDistance(LEFT_TRIG_PIN, LEFT_ECHO_PIN);
+    int rightDist = readUltrasonicDistance(RIGHT_TRIG_PIN, RIGHT_ECHO_PIN);
+    
+    if(leftDist < COLUMN_DISTANCE || rightDist < COLUMN_DISTANCE) {
+      Serial.println("Orientation recovered!");
+      return;
+    }
+  }
+  
+  Serial.println("Failed to recover orientation!");
+  emergencyStopTriggered = true;
+}
+
+void emergencyStop() {
+  emergencyStopTriggered = true;
+  stopMotors();
+  Serial.println("EMERGENCY STOP TRIGGERED!");
+}
+
+void traverseClassroom() {
+  if(emergencyStopTriggered) {
+    stopMotors();
+    return;
+  }
+  
+  if(currentColumn >= TOTAL_COLUMNS) {
+    Serial.println("Traversal complete!");
+    stopMotors();
+    return;
+  }
+  
+  int leftDistance = readUltrasonicDistance(LEFT_TRIG_PIN, LEFT_ECHO_PIN);
+  int rightDistance = readUltrasonicDistance(RIGHT_TRIG_PIN, RIGHT_ECHO_PIN);
+  int frontObstacle = analogRead(IR_SENSOR_PIN);
+  bool rearObstacle = checkRearObstacle();
+  
+  logStatus(leftDistance, rightDistance);
+  
+  if(millis() - lastFeedbackTime > MAX_FORWARD_TIME) {
+    recoverOrientation();
+    return;
+  }
+  
+  if(leftDistance < COLUMN_DISTANCE || rightDistance < COLUMN_DISTANCE) {
+    lastFeedbackTime = millis();
+  }
+  
+  // Check both front and rear obstacles
+  if(frontObstacle < OBSTACLE_THRESHOLD || rearObstacle) {
+    stopMotors();
+    Serial.println("Obstacle detected! Waiting...");
+    while((analogRead(IR_SENSOR_PIN) < OBSTACLE_THRESHOLD || checkRearObstacle()) 
+          && !emergencyStopTriggered) {
+      delay(100);
+    }
+    return;
+  }
+  
+  // Navigation logic
+  if(leftDistance < COLUMN_DISTANCE && rightDistance < COLUMN_DISTANCE) {
+    moveForward(FORWARD_SPEED);
+  }
+  else if(leftDistance >= COLUMN_DISTANCE && rightDistance < COLUMN_DISTANCE) {
+    stopMotors();
+    turnRight();
+    currentColumn++;
+    movingRight = true;
+  }
+  else if(leftDistance < COLUMN_DISTANCE && rightDistance >= COLUMN_DISTANCE) {
+    stopMotors();
+    turnLeft();
+    movingRight = false;
+  }
+  else {
+    moveForward(FORWARD_SPEED);
+  }
+}
+
+void loop() {
+  traverseClassroom();
+}
